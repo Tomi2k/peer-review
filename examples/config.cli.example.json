@@ -1,0 +1,139 @@
+{
+  "schema_version": "1.0",
+  "state_dir": "~/.local/state/peer-review",
+  "language": "en",
+  "selection": {
+    "k_cost_doubling": 5.0,
+    "quality_buffer": 3.0,
+    "min_context_window": 128000,
+    "required_capabilities": ["coding", "reasoning"],
+    "allow_routers": false
+  },
+  "source": {
+    "url": "https://artificialanalysis.ai/agents/coding-agents",
+    "firecrawl_mode": "api",
+    "firecrawl_api_url": "https://api.firecrawl.dev/v2/scrape",
+    "firecrawl_api_key_env": "FIRECRAWL_API_KEY",
+    "timeout_seconds": 90
+  },
+  "schedule": {
+    "timezone": "UTC",
+    "daily_hour": 6,
+    "daily_minute": 15
+  },
+  "notifications": {
+    "language": "en",
+    "local_log": true,
+    "webhook_url_env": "PEER_REVIEW_WEBHOOK_URL",
+    "webhook_format": "slack"
+  },
+  "review": {
+    "timeout_seconds": 600,
+    "max_clarification_rounds": 1,
+    "read_only": true
+  },
+  "moderator": {
+    "mode": "provider",
+    "provider": "anthropic",
+    "backend": "cli",
+    "model_id": "fable",
+    "effort": "high"
+  },
+  "providers": {
+    "anthropic": {
+      "cli_type": "claude",
+      "binary": "claude"
+    },
+    "openai": {
+      "cli_type": "codex",
+      "binary": "codex"
+    },
+    "google": {
+      "cli_type": "agy",
+      "binary": "agy"
+    },
+    "xai": {
+      "cli_type": "grok",
+      "binary": "grok"
+    }
+  },
+  "catalog": [
+    {
+      "creator_slug": "google",
+      "agent_slug": "antigravity-cli",
+      "match_model_release": "Gemini 4 Neon",
+      "efforts": ["low", "medium", "high", "xhigh"],
+      "provider": "google",
+      "backend": "cli",
+      "model_id": "gemini-4-neon",
+      "context_window": 1000000,
+      "capabilities": ["coding", "reasoning"]
+    },
+    {
+      "creator_slug": "google",
+      "agent_slug": "antigravity-cli",
+      "match_model_release": "Gemini 4 Carbon",
+      "efforts": ["low", "medium", "high"],
+      "provider": "google",
+      "backend": "cli",
+      "model_id": "gemini-4-carbon",
+      "context_window": 1000000,
+      "capabilities": ["coding", "reasoning"]
+    },
+    {
+      "creator_slug": "anthropic",
+      "agent_slug": "claude-code",
+      "match_model_release": "Claude Fable 5.2",
+      "efforts": ["low", "medium", "high", "xhigh", "max"],
+      "provider": "anthropic",
+      "backend": "cli",
+      "model_id": "fable",
+      "context_window": 200000,
+      "capabilities": ["coding", "reasoning"]
+    },
+    {
+      "creator_slug": "anthropic",
+      "agent_slug": "claude-code",
+      "match_model_release": "Claude Opus 5.5",
+      "efforts": ["low", "medium", "high", "max"],
+      "provider": "anthropic",
+      "backend": "cli",
+      "model_id": "opus",
+      "context_window": 200000,
+      "capabilities": ["coding", "reasoning"]
+    },
+    {
+      "creator_slug": "openai",
+      "agent_slug": "codex",
+      "match_model_release": "GPT-6.2 Astra",
+      "efforts": ["low", "medium", "high", "xhigh", "max"],
+      "provider": "openai",
+      "backend": "cli",
+      "model_id": "gpt-6.2-astra",
+      "context_window": 256000,
+      "capabilities": ["coding", "reasoning"]
+    },
+    {
+      "creator_slug": "openai",
+      "agent_slug": "codex",
+      "match_model_release": "GPT-6.1 Sol",
+      "efforts": ["low", "medium", "high", "xhigh", "max"],
+      "provider": "openai",
+      "backend": "cli",
+      "model_id": "gpt-6.1-sol",
+      "context_window": 256000,
+      "capabilities": ["coding", "reasoning"]
+    },
+    {
+      "creator_slug": "xai",
+      "agent_slug": "grok-build",
+      "match_model_release": "Grok 4.7",
+      "efforts": ["low", "medium", "high", "xhigh"],
+      "provider": "xai",
+      "backend": "cli",
+      "model_id": "grok-4.7",
+      "context_window": 256000,
+      "capabilities": ["coding", "reasoning"]
+    }
+  ]
+}

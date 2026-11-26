@@ -1,0 +1,4 @@
+# Daily Peer Review model check (adjust CRON_TZ to your preferred IANA timezone)
+# Review Artificial Analysis and provider Terms of Service before enabling unattended runs (see README).
+CRON_TZ=UTC
+15 6 * * * umask 077; $HOME/.local/bin/peer-review-update >> $HOME/.local/state/peer-review/updater.log 2>&1

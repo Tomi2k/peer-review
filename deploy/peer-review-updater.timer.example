@@ -1,0 +1,12 @@
+# Review Artificial Analysis and provider Terms of Service before enabling unattended runs (see README).
+[Unit]
+Description=Run Peer Review Daily Model Lineup Updater
+
+[Timer]
+# Adjust timezone as desired, e.g. OnCalendar=*-*-* 06:15:00 America/New_York
+OnCalendar=*-*-* 06:15:00 UTC
+Persistent=true
+RandomizedDelaySec=5m
+
+[Install]
+WantedBy=timers.target

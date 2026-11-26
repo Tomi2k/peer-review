@@ -1,0 +1,15 @@
+# User-level systemd service (~/.config/systemd/user/peer-review-updater.service)
+# Review Artificial Analysis and provider Terms of Service before enabling unattended runs (see README).
+# Enable with: systemctl --user enable --now peer-review-updater.timer
+[Unit]
+Description=Peer Review Daily Benchmark Check and Model Lineup Updater
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+UMask=0077
+Environment=TZ=UTC
+Environment=PEER_REVIEW_CONFIG=%h/.config/peer-review/config.json
+ExecStart=%h/.local/bin/peer-review-update
+NoNewPrivileges=yes
