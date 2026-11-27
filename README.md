@@ -224,8 +224,8 @@ For offline evaluation or when using the official Artificial Analysis API instea
 
 ## License
 
-MIT License — Copyright (c) 2026 Timothy Scherman. See [LICENSE](LICENSE).
+MIT License — Copyright (c) 2026 [Timothy Scherman](https://timothyscherman.com). See [LICENSE](LICENSE).
 
 ---
 
-Built by **Timothy Scherman**. Less AI theater. More results.
+Built by **Timothy Scherman** ([timothyscherman.com](https://timothyscherman.com)). Less AI theater. More results.

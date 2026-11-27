@@ -35,6 +35,7 @@ done
 command -v python3 >/dev/null 2>&1 || { echo "ERROR: python3 is required (3.10+)" >&2; exit 2; }
 
 for p in \
+  "$HOME/.local" "$HOME/.local/share" "$HOME/.local/state" "$HOME/.config" \
   "$DEST" "$DEST/peer_review" "$DEST/bin" "$MANIFEST" \
   "$BIN_DIR" "$BIN_DIR/peer-review" "$BIN_DIR/peer-review-update" \
   "$CFG_DIR" "$CFG_DIR/config.json" "$STATE_DIR"
@@ -63,7 +64,13 @@ targets() {
 }
 
 TMP_PATHS=()
+OLD_BACKUP=""
+SWAP_DONE=0
 cleanup() {
+  if [ "$SWAP_DONE" = "0" ] && [ -n "$OLD_BACKUP" ] && [ -d "$OLD_BACKUP" ]; then
+    [ -d "$OLD_BACKUP/peer_review" ] && [ ! -e "$DEST/peer_review" ] && mv "$OLD_BACKUP/peer_review" "$DEST/" || true
+    [ -d "$OLD_BACKUP/bin" ] && [ ! -e "$DEST/bin" ] && mv "$OLD_BACKUP/bin" "$DEST/" || true
+  fi
   for p in "${TMP_PATHS[@]:-}"; do
     if [ -n "$p" ]; then
       rm -rf -- "$p"
@@ -126,6 +133,7 @@ if [ -d "$DEST/peer_review" ] || [ -d "$DEST/bin" ]; then
   [ -d "$DEST/bin" ] && mv "$DEST/bin" "$OLD_BACKUP/"
 fi
 mv "$STAGE/peer_review" "$STAGE/bin" "$DEST/"
+SWAP_DONE=1
 echo "runtime  $DEST"
 
 # Install isolated CLI wrappers atomically via mktemp + mv.
@@ -158,8 +166,8 @@ while read -r cli dir; do
     continue
   fi
   f="$dir/peer-review/SKILL.md"
-  if [ -L "$dir" ] || [ -L "$dir/peer-review" ] || [ -L "$f" ]; then
-    echo "skipped  $cli: $f is a symlink"
+  if [ -L "$(dirname "$dir")" ] || [ -L "$dir" ] || [ -L "$dir/peer-review" ] || [ -L "$f" ]; then
+    echo "skipped  $cli: $f or parent is a symlink"
     continue
   fi
   if [ -e "$f" ] && ! ours "$f" && [ "$FORCE" != "1" ]; then
@@ -171,8 +179,11 @@ while read -r cli dir; do
     cp -p "$f" "$f.bak-$(date -u +%Y%m%d-%H%M%S)"
     echo "backup   $f.bak-*"
   fi
-  cp "$SRC_SKILL" "$f"
-  chmod 644 "$f"
+  SKILL_TMP="$(mktemp "$dir/peer-review/.SKILL.XXXXXX")"
+  TMP_PATHS+=("$SKILL_TMP")
+  cp "$SRC_SKILL" "$SKILL_TMP"
+  chmod 644 "$SKILL_TMP"
+  mv "$SKILL_TMP" "$f"
   FILTERED="$(mktemp "$DEST/.manifest-filter.XXXXXX")"
   TMP_PATHS+=("$FILTERED")
   awk -v target="$f" 'index($0, "  ") > 0 && substr($0, index($0, "  ") + 2) == target { next } { print }' "$NEW_MANIFEST" > "$FILTERED"

@@ -196,6 +196,9 @@ def _http_post_json(
         err_bytes = exc.read(MAX_HTTP_ERROR_BYTES) if exc.fp else b""
         body = redact_secrets(err_bytes.decode("utf-8", errors="replace")[:500])
         raise AdapterError(f"HTTP {exc.code} from {safe_url}: {body}") from exc
+    except ValueError as exc:
+        # http.client.InvalidHeader subclasses ValueError and can embed raw secret header bytes.
+        raise AdapterError(f"Invalid HTTP header or request configuration for {safe_url}") from exc
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise AdapterError(f"Request failed for {safe_url}: {redact_secrets(str(exc))}") from exc
     try:
@@ -208,12 +211,15 @@ def _http_post_json(
 
 
 def _resolve_provider_key(provider_cfg: dict[str, Any], default_env: str) -> str:
-    key = resolve_secret(
-        env_var=provider_cfg.get("api_key_env", default_env),
-        secret_command=provider_cfg.get("api_key_command"),
-    )
+    env_name = provider_cfg.get("api_key_env", default_env)
+    try:
+        key = resolve_secret(
+            env_var=env_name,
+            secret_command=provider_cfg.get("api_key_command"),
+        )
+    except ValueError as exc:
+        raise AdapterError(f"Invalid API key for {env_name}: {exc}") from exc
     if not key:
-        env_name = provider_cfg.get("api_key_env", default_env)
         raise AdapterError(
             f"Missing API key (env {env_name} or api_key_command in provider config)."
         )
@@ -378,6 +384,8 @@ def _run_cli(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             cwd=cwd,
             env=env,
             start_new_session=True,
@@ -390,13 +398,14 @@ def _run_cli(
     try:
         stdout_text, stderr_text = proc.communicate(input=stdin_text, timeout=timeout_seconds)
     except subprocess.TimeoutExpired as exc:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except OSError:
+        if proc.poll() is None:
             try:
-                proc.kill()
+                os.killpg(proc.pid, signal.SIGKILL)
             except OSError:
-                pass
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
         try:
             proc.communicate(timeout=5)
         except Exception:
@@ -412,24 +421,19 @@ def _run_cli(
                 pass
         raise AdapterError(f"CLI timed out after {timeout_seconds}s: {cmd[0]}") from exc
     except Exception:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except OSError:
+        if proc.poll() is None:
             try:
-                proc.kill()
+                os.killpg(proc.pid, signal.SIGKILL)
             except OSError:
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+            try:
+                proc.wait(timeout=2)
+            except Exception:
                 pass
-        try:
-            proc.wait(timeout=2)
-        except Exception:
-            pass
         raise
-    finally:
-        # Ensure no lingering background grandchildren survive in the CLI process group after exit.
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except OSError:
-            pass
 
     # Always check exit code BEFORE reading any output_file so failed runs never masquerade as success.
     if proc.returncode != 0:

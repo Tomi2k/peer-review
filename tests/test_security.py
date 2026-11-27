@@ -122,6 +122,23 @@ class SecurityValidationTest(unittest.TestCase):
             env_file.write_text("SECRET=12345678\n", encoding="utf-8")
             with self.assertRaises(ValueError):
                 build_context_packet("Review", [], file_paths=[env_file])
+            envrc = Path(tmp) / ".envrc"
+            envrc.write_text("export FOO=bar\n", encoding="utf-8")
+            with self.assertRaises(ValueError):
+                build_context_packet("Review", [], file_paths=[envrc])
+            # Verify resolve_secret rejects CR/LF control chars (F-02).
+            from peer_review.config import resolve_secret
+            with mock.patch.dict(os.environ, {"PR_BAD_SECRET": "line1\nX-Injected: 1"}):
+                with self.assertRaises(ValueError):
+                    resolve_secret(env_var="PR_BAD_SECRET")
+            # Verify Moderator synthesis prompt omits raw error text from failed_seats (F-02).
+            from peer_review.prompts import build_moderator_synthesis_prompt
+            pkt = build_context_packet("Review code", [])
+            mp = build_moderator_synthesis_prompt(
+                pkt, {}, {}, None, [],
+                [{"stage": "round1", "seat_id": "seat-1", "creator": "X", "model_id": "m", "effort": "high", "error": "RAW_STDERR_LEAK_999"}],
+            )
+            self.assertNotIn("RAW_STDERR_LEAK_999", mp)
 
     def test_redacts_secrets_in_errors(self) -> None:
         # Build synthetic secret-shaped fixtures dynamically so no literal token patterns sit in source.
@@ -133,9 +150,10 @@ class SecurityValidationTest(unittest.TestCase):
         pem_fake = "-----BEGIN " + "OPENSSH PRIVATE KEY-----\nabcdef1234567890\n-----END " + "OPENSSH PRIVATE KEY-----"
         hook_url = "https://hooks.slack.com/services/" + "T000/B000/SECRET123"
         auth_url = "https://" + "usr" + ":" + "pwd" + "@" + "api.example.invalid/v1?key=MYSECRETKEY99"
+        db_url = "postgres://" + "dbu" + ":" + "dbp@ss99" + "@" + "db.internal.invalid:5432/app"
         json_hdr = '{"x-api-key": "CUSTOMSECRETVALUE99", "api_key": "p@ss!w0rd#99"} \\"secret\\": \\"ESC!P@SS99\\"'
-        hdr_unquoted = "x-api-key: HDR!P@SS99\nPASSWORD=ENV!P@SS99"
-        raw = f"Authorization: Bearer {tok_sk} {tok_fc} {tok_slack} {tok_gho} {tok_aws} {pem_fake} {hook_url} {auth_url} {json_hdr} {hdr_unquoted}"
+        hdr_unquoted = "x-api-key: HDR!P@SS99\nPASSWORD=ENV!P@SS99\nAWS_SECRET_ACCESS_KEY=AWSS3CR3TKEY99"
+        raw = f"Authorization: Bearer {tok_sk} {tok_fc} {tok_slack} {tok_gho} {tok_aws} {pem_fake} {hook_url} {auth_url} {db_url} {json_hdr} {hdr_unquoted}"
         redacted = redact_secrets(raw)
         for leak in (
             "1234567890",
@@ -143,12 +161,14 @@ class SecurityValidationTest(unittest.TestCase):
             "5678-abcdef",
             "SECRET123",
             "usr:pwd",
+            "dbp@ss99",
             "MYSECRETKEY99",
             "CUSTOMSECRETVALUE99",
             "p@ss!w0rd#99",
             "ESC!P@SS99",
             "HDR!P@SS99",
             "ENV!P@SS99",
+            "AWSS3CR3TKEY99",
             "OPENSSH PRIVATE KEY",
         ):
             self.assertNotIn(leak, redacted)

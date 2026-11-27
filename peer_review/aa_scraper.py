@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
+import signal
 import subprocess
 import urllib.error
 import urllib.parse
@@ -311,6 +313,8 @@ def _scrape_via_firecrawl_rest(
         err_bytes = exc.read(MAX_HTTP_ERROR_BYTES) if exc.fp else b""
         detail = redact_secrets(err_bytes.decode("utf-8", errors="replace")[:400])
         raise ScrapeError(f"Firecrawl API HTTP {exc.code}: {detail}") from exc
+    except ValueError as exc:
+        raise ScrapeError("Invalid Firecrawl API header or request configuration") from exc
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise ScrapeError(f"Firecrawl API request failed: {redact_secrets(str(exc))}") from exc
 
@@ -365,24 +369,74 @@ def _scrape_via_bridge_command(
     if "{payload_json}" not in bridge_command:
         cmd.append(json.dumps(call_payload))
 
+    bridge_allow = {
+        "HOME", "USER", "LOGNAME", "PATH", "SHELL", "LANG", "LC_ALL", "LC_CTYPE",
+        "TMPDIR", "TZ", "SSH_AUTH_SOCK", "XDG_CONFIG_HOME", "XDG_DATA_HOME",
+        "XDG_CACHE_HOME", "XDG_STATE_HOME", "SSL_CERT_FILE", "SSL_CERT_DIR",
+        "REQUESTS_CA_BUNDLE", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
+        "http_proxy", "https_proxy", "no_proxy",
+    }
+    bridge_env = {k: v for k, v in os.environ.items() if k in bridge_allow}
+
     try:
-        res = subprocess.run(
+        proc = subprocess.Popen(
             cmd,
-            capture_output=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=timeout_seconds,
-            check=False,
+            encoding="utf-8",
+            errors="replace",
+            env=bridge_env,
+            start_new_session=True,
         )
+    except OSError as exc:
+        raise ScrapeError(f"Firecrawl bridge command failed to start: {redact_secrets(str(exc))}") from exc
+
+    try:
+        stdout_text, stderr_text = proc.communicate(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired as exc:
+        if proc.poll() is None:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except OSError:
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+        try:
+            proc.communicate(timeout=5)
+        except Exception:
+            for stream in (proc.stdout, proc.stderr):
+                try:
+                    if stream is not None:
+                        stream.close()
+                except OSError:
+                    pass
+            try:
+                proc.wait(timeout=2)
+            except Exception:
+                pass
+        raise ScrapeError(f"Firecrawl bridge timed out after {timeout_seconds}s") from exc
     except (OSError, subprocess.SubprocessError) as exc:
+        if proc.poll() is None:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except OSError:
+                pass
+            try:
+                proc.wait(timeout=2)
+            except Exception:
+                pass
         raise ScrapeError(f"Firecrawl bridge command failed: {redact_secrets(str(exc))}") from exc
 
-    if res.returncode != 0:
+    if proc.returncode != 0:
         raise ScrapeError(
-            f"Firecrawl bridge exited {res.returncode}: {redact_secrets(res.stderr[-500:])}"
+            f"Firecrawl bridge exited {proc.returncode}: {redact_secrets((stderr_text or '')[-500:])}"
         )
 
     try:
-        outer = json.loads(res.stdout)
+        outer = json.loads(stdout_text or "")
     except json.JSONDecodeError as exc:
         raise ScrapeError(f"Firecrawl bridge emitted non-JSON output: {exc}") from exc
     if not isinstance(outer, dict):
@@ -423,10 +477,13 @@ def fetch_artificial_analysis_snapshot(config: dict[str, Any]) -> BenchmarkSnaps
         bridge_cmd = src.get("firecrawl_bridge_command")
         payload = _scrape_via_bridge_command(source_url, bridge_cmd, timeout_seconds)
     elif mode == "api":
-        api_key = resolve_secret(
-            env_var=src.get("firecrawl_api_key_env", "FIRECRAWL_API_KEY"),
-            secret_command=src.get("firecrawl_api_key_command"),
-        )
+        try:
+            api_key = resolve_secret(
+                env_var=src.get("firecrawl_api_key_env", "FIRECRAWL_API_KEY"),
+                secret_command=src.get("firecrawl_api_key_command"),
+            )
+        except ValueError as exc:
+            raise ScrapeError(f"Invalid Firecrawl API key: {exc}") from exc
         if not api_key:
             raise ScrapeError(
                 "Missing Firecrawl API key. Set FIRECRAWL_API_KEY or configure source.firecrawl_api_key_command."

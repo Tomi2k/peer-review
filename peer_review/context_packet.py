@@ -20,17 +20,21 @@ from .models import SeatConfig
 
 SENSITIVE_BASENAMES = frozenset({
     ".env",
+    ".envrc",
+    ".git-credentials",
     ".netrc",
     ".npmrc",
+    ".pgpass",
     ".pypirc",
+    "kubeconfig",
     "id_rsa",
     "id_ed25519",
     "id_ecdsa",
     "id_dsa",
     "credentials.json",
 })
-SENSITIVE_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".kdbx")
-PEM_PRIVATE_KEY_RE = re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----")
+SENSITIVE_SUFFIXES = (".env", ".pem", ".key", ".p12", ".pfx", ".kdbx")
+PEM_PRIVATE_KEY_RE = re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----")
 
 PACKET_SCHEMA_VERSION = "1.0"
 MAX_FILE_BYTES = 512 * 1024  # 512 KiB per attached file

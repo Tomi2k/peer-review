@@ -25,7 +25,9 @@ MAX_HTTP_RESPONSE_BYTES = 16 * 1024 * 1024  # 16 MiB cap on HTTP JSON responses
 MAX_HTTP_ERROR_BYTES = 4096
 
 SECRET_REDACT_PATTERNS = [
-    re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----"),
+    re.compile(
+        r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----(?:(?!-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----)[\s\S]){0,32768}?-----END [A-Z0-9 ]*PRIVATE KEY-----"
+    ),
     re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[A-Za-z0-9+/=\s]{16,}"),
     re.compile(
         r"\b(sk-[A-Za-z0-9_-]{12,}|fc-[A-Za-z0-9_-]{12,}|AIza[A-Za-z0-9_-]{20,}|"
@@ -36,9 +38,9 @@ SECRET_REDACT_PATTERNS = [
     re.compile(r"(?i)(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{12,}"),
     re.compile(r"https?://hooks\.slack\.com/services/[A-Za-z0-9/_-]+"),
     re.compile(
-        r"""(?i)(x-api-key|x-goog-api-key|api[_-]?key|token|secret|password)(?:\\?['"])?\s*[:=]\s*(?:\\"[^"\r\n]{6,}\\"|\\'[^'\r\n]{6,}\\'|"[^"\r\n]{6,}"|'[^'\r\n]{6,}'|[^\s"'`,;{}\[\]]{6,})"""
+        r"""(?i)([A-Za-z0-9_-]*(?:x-api-key|x-goog-api-key|(?:access|secret|private|signing|encryption|api)[_-]?key|token|secret|password))(?:\\?['"])?\s*[:=]\s*(?:\\"[^"\r\n]{6,}\\"|\\'[^'\r\n]{6,}\\'|"[^"\r\n]{6,}"|'[^'\r\n]{6,}'|[^\s"'`,;{}\[\]]{6,})"""
     ),
-    re.compile(r"(https?://)([^/@\s]+@)"),
+    re.compile(r"([a-zA-Z][a-zA-Z0-9+.-]*://)([^/?#\s]+@)"),
     re.compile(r"([?&](?:key|api_key|token|access_token|secret)=)([^&\s]+)", re.I),
 ]
 
@@ -295,9 +297,17 @@ def ensure_private_dir(path: Path) -> Path:
             try:
                 next_dfd = os.open(part, dir_flags_nofollow, dir_fd=dfd)
             except FileNotFoundError:
-                os.mkdir(part, 0o700, dir_fd=dfd)
+                try:
+                    os.mkdir(part, 0o700, dir_fd=dfd)
+                except FileExistsError:
+                    pass
                 next_dfd = os.open(part, dir_flags_nofollow, dir_fd=dfd)
-                os.fchmod(next_dfd, 0o700)
+                st_new = os.fstat(next_dfd)
+                if not stat.S_ISDIR(st_new.st_mode):
+                    os.close(next_dfd)
+                    raise OSError(f"Refusing non-directory component {part!r} in private directory {path}")
+                if not hasattr(os, "geteuid") or st_new.st_uid == os.geteuid():
+                    os.fchmod(next_dfd, 0o700)
             except OSError as exc:
                 raise OSError(
                     f"Refusing symlinked or non-directory component {part!r} in private directory {path}: {exc.strerror or exc}"
@@ -404,18 +414,24 @@ def validate_run_id(run_id: str) -> str:
     return run_id
 
 
+def _validate_secret_value(val: str) -> str:
+    if re.search(r"[\x00-\x1f\x7f]", val):
+        raise ValueError("Resolved secret contains disallowed control characters (CR/LF/NUL)")
+    return val
+
+
 def resolve_secret(
     env_var: str | None = None,
     secret_command: list[str] | None = None,
 ) -> str | None:
     """Resolve a secret from environment variable or an explicit argv secret command.
 
-    Never executes a shell string. Never logs the resolved value.
+    Never executes a shell string. Never logs the resolved value. Rejects control chars.
     """
     if env_var:
         val = os.environ.get(env_var, "").strip()
         if val:
-            return val
+            return _validate_secret_value(val)
     if secret_command:
         if not isinstance(secret_command, list) or not all(
             isinstance(part, str) and part for part in secret_command
@@ -428,6 +444,8 @@ def resolve_secret(
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 start_new_session=True,
             )
         except (OSError, subprocess.SubprocessError):
@@ -435,13 +453,14 @@ def resolve_secret(
         try:
             stdout_text, _ = proc.communicate(timeout=20)
         except subprocess.TimeoutExpired:
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except OSError:
+            if proc.poll() is None:
                 try:
-                    proc.kill()
+                    os.killpg(proc.pid, signal.SIGKILL)
                 except OSError:
-                    pass
+                    try:
+                        proc.kill()
+                    except OSError:
+                        pass
             try:
                 proc.communicate(timeout=3)
             except Exception:
@@ -457,16 +476,20 @@ def resolve_secret(
                     pass
             return None
         except (OSError, subprocess.SubprocessError):
+            if proc.poll() is None:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except OSError:
+                    pass
+                try:
+                    proc.wait(timeout=2)
+                except Exception:
+                    pass
             return None
-        finally:
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except OSError:
-                pass
         if proc.returncode == 0:
             val = (stdout_text or "").strip()
             if val:
-                return val
+                return _validate_secret_value(val)
     return None
 
 
